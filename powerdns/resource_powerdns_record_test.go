@@ -3,6 +3,8 @@ package powerdns
 import (
 	"fmt"
 	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/helper/resource"
@@ -14,21 +16,21 @@ import (
 //
 
 // TODO: Move to helper block
-func testPDNSRecordCommonTestCore(t *testing.T, recordConfig &PowerDNSRecordResource) {
+func testPDNSRecordCommonTestCore(t *testing.T, recordConfig *PowerDNSRecordResource) {
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
 		Providers:    testAccProviders,
 		CheckDestroy: testAccCheckPDNSRecordDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: recordConfig.ResourceDelcaration(),
+				Config: recordConfig.ResourceDeclaration(),
 				Check: resource.ComposeTestCheckFunc(
-					testAccCheckPDNSRecordExists(recordConfig.ResourceDelcaration),
+					testAccCheckPDNSRecordContents(recordConfig),
 				),
 			},
 			{
-				ResourceName:      recordConfig.ResourceName,
-				ImportStateId:     recordConfig.ResourceID,
+				ResourceName:      recordConfig.ResourceName(),
+				ImportStateId:     recordConfig.ResourceID(),
 				ImportState:       true,
 				ImportStateVerify: true,
 			},
@@ -43,7 +45,7 @@ func TestAccPDNSRecord_Empty(t *testing.T) {
 		Providers: testAccProviders,
 		Steps: []resource.TestStep{
 			{
-				Config:      testPDNSRecordConfigRecordEmpty,
+				Config:      testPDNSRecordConfigRecordEmpty().ResourceDeclaration(),
 				ExpectError: regexp.MustCompile("'records' must not be empty"),
 			},
 		},
@@ -55,7 +57,7 @@ func TestAccPDNSRecord_A(t *testing.T) {
 }
 
 func TestAccPDNSRecord_WithPtr(t *testing.T) {
-	recordConfig = testPDNSRecordConfigAWithPtr()
+	recordConfig := testPDNSRecordConfigAWithPtr()
 
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -65,12 +67,12 @@ func TestAccPDNSRecord_WithPtr(t *testing.T) {
 			{
 				Config: recordConfig.ResourceDeclaration(),
 				Check: resource.ComposeTestCheckFunc(
-					testAccCheckPDNSRecordExists(recordConfig.ResourceName),
+					testAccCheckPDNSRecordContents(recordConfig),
 				),
 			},
 			{
-				ResourceName:            recordConfig.ResourceName,
-				ImportStateId:           recordConfig.ResourceID,
+				ResourceName:            recordConfig.ResourceName(),
+				ImportStateId:           recordConfig.ResourceID(),
 				ImportState:             true,
 				ImportStateVerify:       true,
 				ImportStateVerifyIgnore: []string{"set_ptr"}, // Variance from common function
@@ -134,7 +136,7 @@ func TestAccPDNSRecord_MX(t *testing.T) {
 	testPDNSRecordCommonTestCore(t, testPDNSRecordConfigMX())
 }
 
-func TestAccPDNSRecord_MX(t *testing.T) {
+func TestAccPDNSRecord_MXMulti(t *testing.T) {
 	testPDNSRecordCommonTestCore(t, testPDNSRecordConfigMXMulti())
 }
 
@@ -175,7 +177,7 @@ func TestAccPDNSRecord_SOA(t *testing.T) {
 //
 // Pattern: testPDNSRecordConfigXXX() returns a PowerDNSRecordResource struct
 // The PowerDNSRecordResource struct can be used to query test config, update attributes for update tests,
-// and can have ResourceDelcaration() called against it to generate the Terraform DSL resource block string.
+// and can have ResourceDeclaration() called against it to generate the Terraform DSL resource block string.
 //
 type PowerDNSRecordResourceArguments struct {
 	// TODO: Not following project UpCamelCase convention.
@@ -194,14 +196,14 @@ type PowerDNSRecordResource struct {
 	arguments *PowerDNSRecordResourceArguments
 }
 
-func (resourceConfig *PowerDNSRecordResource) ResourceDelcaration() (string) {
+func (resourceConfig *PowerDNSRecordResource) ResourceDeclaration() (string) {
 	var quotedRecords []string
 	for _, record := range resourceConfig.arguments.records {
-		quotedRecords = append(quotedRecords, ('"' + record + '"'))
+		quotedRecords = append(quotedRecords, (`"` + record + `"`))
 	}
 
 	// TODO: Can use backtics instead of double quotes to not hve to escape
-	resourceDeclaration := "resource \"powerdns_record\" \"" + resourceConfig.name +"\" + {\n"
+	resourceDeclaration := "resource \"powerdns_record\" \"" + resourceConfig.name + "\" {\n"
 	if resourceConfig.arguments.count > 0 {
 		resourceDeclaration += "  count = " + strconv.Itoa(resourceConfig.arguments.count) + "\n"
 	}
@@ -212,7 +214,7 @@ func (resourceConfig *PowerDNSRecordResource) ResourceDelcaration() (string) {
 	resourceDeclaration += "  type = \""    + resourceConfig.arguments.record_type       + "\"\n"
 	resourceDeclaration += "  ttl = "       + strconv.Itoa(resourceConfig.arguments.ttl) + "\n"
 	resourceDeclaration += "  records = [ " + strings.Join(quotedRecords,", ")           + " ]\n"
-	
+
 	if resourceConfig.arguments.set_ptr {
 		resourceDeclaration += "  set_ptr = true\n"
 	}
@@ -239,7 +241,7 @@ func NewPowerDNSRecordResource() (*PowerDNSRecordResource) {
 	record.arguments.zone = "sysa.xyz."
 	// TTL is set to 60 in the majority of the tests, default to 60 do deduplicate code.
 	record.arguments.ttl = 60
-
+	record.arguments.records     = make([]string, 0)
 	return record
 }
 
@@ -248,165 +250,170 @@ func testPDNSRecordConfigRecordEmpty() (*PowerDNSRecordResource) {
 	record.name                  = "test-a"
 	record.arguments.name        = "testpdnsrecordconfigrecordempty.sysa.xyz."
 	record.arguments.record_type = "A"
-	record.arguments.records     = []
 	return record
 }
 
-func testPDNSRecordConfigA() (*PowerDNSResourceArguments) {
+func testPDNSRecordConfigA() (*PowerDNSRecordResource) {
 	record := NewPowerDNSRecordResource()
 	record.name                  = "test-a"
 	record.arguments.name        = "testpdnsrecordconfigrecorda.sysa.xyz."
 	record.arguments.record_type = "A"
-	record.arguments.records = [ "1.1.1.1", "2.2.2.2" ]
+	record.arguments.records = append(record.arguments.records, "1.1.1.1")
+	record.arguments.records = append(record.arguments.records, "2.2.2.2")
 	return record
 }
 
-func testPDNSRecordConfigAWithPtr() (*PowerDNSResourceArguments) {
+func testPDNSRecordConfigAWithPtr() (*PowerDNSRecordResource) {
 	record := NewPowerDNSRecordResource()
 	record.name                  = "test-a"
 	record.arguments.name        = "testpdnsrecordconfigrecordawithptr.sysa.xyz."
 	record.arguments.record_type = "A"
-	record.arguments.records     = [ "1.1.1.1" ]
+	record.arguments.records = append(record.arguments.records, "1.1.1.1")
 	record.arguments.set_ptr     = true
 	return record
 }
 
-func testPDNSRecordConfigHyphenedWithCount() (*PowerDNSResourceArguments) {
+func testPDNSRecordConfigHyphenedWithCount() (*PowerDNSRecordResource) {
 	record := NewPowerDNSRecordResource()
 	record.name                  = "test-counted"
 	record.arguments.count       = 2
 	record.arguments.name        = "testpdnsrecordconfighyphenedwithcount-${count.index}.sysa.xyz."
 	record.arguments.record_type = "A"
-	record.arguments.records     = [ "1.1.1.${count.index}" ]
+	record.arguments.records = append(record.arguments.records, "1.1.1.${count.index}")
 	return record
 }
 
-func testPDNSRecordConfigAAAA() (*PowerDNSResourceArguments) {
+func testPDNSRecordConfigAAAA() (*PowerDNSRecordResource) {
 	record := NewPowerDNSRecordResource()
 	record.name                  = "test-aaaa"
 	record.arguments.name        = "testpdnsrecordconfigaaaa.sysa.xyz."
 	record.arguments.record_type = "AAAA"
-	record.arguments.records     = [ "2001:db8:2000:bf0::1", "2001:db8:2000:bf1::1" ]
+	record.arguments.records = append(record.arguments.records, "2001:db8:2000:bf0::1")
+	record.arguments.records = append(record.arguments.records, "2001:db8:2000:bf1::1")
 	return record
 }
 
-func testPDNSRecordConfigCNAME() (*PowerDNSResourceArguments) {
+func testPDNSRecordConfigCNAME() (*PowerDNSRecordResource) {
 	record := NewPowerDNSRecordResource()
 	record.name                  = "test-cname"
 	record.arguments.name = "testpdnsrecordconfigcname.sysa.xyz."
 	record.arguments.record_type = "CNAME"
-	record.arguments.records = [ "redis.example.com." ]
+	record.arguments.records = append(record.arguments.records, "redis.example.com.")
 	return record
 }
 
-func testPDNSRecordConfigCNAME() (*PowerDNSResourceArguments) {
+func testPDNSRecordConfigHINFO() (*PowerDNSRecordResource) {
 	record := NewPowerDNSRecordResource()
 	record.name                  = "test-hinfo"
 	record.arguments.name = "testpdnsrecordconfighinfo.sysa.xyz."
 	record.arguments.record_type = "HINFO"
-	record.arguments.records = [ "\"PC-Intel-2.4ghz\" \"Linux\"" ]
+	record.arguments.records = append(record.arguments.records,`\"PC-Intel-2.4ghz\" \"Linux\"`)
 	return record
 }
 
-func testPDNSRecordConfigLOC() (*PowerDNSResourceArguments) {
+func testPDNSRecordConfigLOC() (*PowerDNSRecordResource) {
 	record := NewPowerDNSRecordResource()
 	record.name                  = "test-loc"
 	record.arguments.name = "testpdnsrecordconfigloc.sysa.xyz."
 	record.arguments.record_type = "LOC"
-	record.arguments.records = [ "51 56 0.123 N 5 54 0.000 E 4.00m 1.00m 10000.00m 10.00m" ]
+	record.arguments.records = append(record.arguments.records, "51 56 0.123 N 5 54 0.000 E 4.00m 1.00m 10000.00m 10.00m")
 	return record
 }
 
-func testPDNSRecordConfigMX() (*PowerDNSResourceArguments) {
+func testPDNSRecordConfigMX() (*PowerDNSRecordResource) {
 	record := NewPowerDNSRecordResource()
 	record.name                  = "test-mx"
 	record.arguments.name = "sysa.xyz."
 	record.arguments.record_type = "MX"
-	record.arguments.records = [ "10 mail.example.com." ]
+	record.arguments.records = append(record.arguments.records, "10 mail.example.com.")
 	return record
 }
 
-func testPDNSRecordConfigMXMulti() (*PowerDNSResourceArguments) {
+func testPDNSRecordConfigMXMulti() (*PowerDNSRecordResource) {
 	record := NewPowerDNSRecordResource()
 	record.name                  = "test-mx-multi"
 	record.arguments.name = "multi.sysa.xyz."
-	record.arguments.record_ttype = "MX"
-	record.arguments.records = [ "10 mail1.example.com.", "20 mail2.example.com." ]
+	record.arguments.record_type = "MX"
+	record.arguments.records = append(record.arguments.records, "10 mail.example.com.")
+	record.arguments.records = append(record.arguments.records, "20 mail2.example.com.")
 	return record
 }
 
-func testPDNSRecordConfigNAPTR() (*PowerDNSResourceArguments) {
+func testPDNSRecordConfigNAPTR() (*PowerDNSRecordResource) {
 	record := NewPowerDNSRecordResource()
 	record.name                  = "test-naptr"
 	record.arguments.name = "sysa.xyz."
 	record.arguments.record_type = "NAPTR"
-	record.arguments.records = [ "100 50 \"s\" \"z3950+I2L+I2C\" \"\" _z3950._tcp.gatech.edu'." ]
+	record.arguments.records = append(record.arguments.records, `100 50 \"s\" \"z3950+I2L+I2C\" \"\" _z3950._tcp.gatech.edu'.`)
 	return record
 }
 
-func testPDNSRecordConfigNS() (*PowerDNSResourceArguments) {
+func testPDNSRecordConfigNS() (*PowerDNSRecordResource) {
 	record := NewPowerDNSRecordResource()
 	record.name                  = "test-ns"
 	record.arguments.name = "lab.sysa.xyz."
 	record.arguments.record_type = "NS"
-	record.arguments.records = [ "ns1.sysa.xyz.", "ns2.sysa.xyz." ]
+	record.arguments.records = append(record.arguments.records, "ns1.sysa.xyz.")
+	record.arguments.records = append(record.arguments.records, "ns2.sysa.xyz.")
 	return record
 }
 
-func testPDNSRecordConfigSPF() (*PowerDNSResourceArguments) {
+func testPDNSRecordConfigSPF() (*PowerDNSRecordResource) {
 	record := NewPowerDNSRecordResource()
 	record.name                  = "test-spf"
 	record.arguments.name = "sysa.xyz."
 	record.arguments.record_type = "SPF"
-	record.arguments.records = [ "\"v=spf1 +all\"" ]
+	record.arguments.records = append(record.arguments.records, `\"v=spf1 +all\"`)
 	return record
 }
 
-func testPDNSRecordConfigSSHFP() (*PowerDNSResourceArguments) {
+func testPDNSRecordConfigSSHFP() (*PowerDNSRecordResource) {
 	record := NewPowerDNSRecordResource()
 	record.name                  = "test-sshfp"
 	record.arguments.name = "ssh.sysa.xyz."
 	record.arguments.record_type = "SSHFP"
-	record.arguments.records = [ "1 1 123456789abcdef67890123456789abcdef67890" ]
+	record.arguments.records = append(record.arguments.records, "1 1 123456789abcdef67890123456789abcdef67890")
 	return record
 }
 
-func testPDNSRecordConfigSRV() (*PowerDNSResourceArguments) {
+func testPDNSRecordConfigSRV() (*PowerDNSRecordResource) {
 	record := NewPowerDNSRecordResource()
 	record.name                  = "test-srv"
 	record.arguments.name = "_redis._tcp.sysa.xyz."
 	record.arguments.record_type = "SRV"
-	record.arguments.records = [ "0 10 6379 redis1.sysa.xyz.", "0 10 6379 redis2.sysa.xyz.", "10 10 6379 redis-replica.sysa.xyz." ]
+	record.arguments.records = append(record.arguments.records, "0 10 6379 redis1.sysa.xyz.")
+	record.arguments.records = append(record.arguments.records, "0 10 6379 redis2.sysa.xyz.")
+	record.arguments.records = append(record.arguments.records, "10 10 6379 redis-replica.sysa.xyz.")
 	return record
 }
 
-func testPDNSRecordConfigTXT() (*PowerDNSResourceArguments) {
+func testPDNSRecordConfigTXT() (*PowerDNSRecordResource) {
 	record := NewPowerDNSRecordResource()
 	record.name                  = "test-txt"
 	record.arguments.name = "text.sysa.xyz."
 	record.arguments.record_type = "TXT"
-	record.arguments.records = [ "\"text record payload\"" ]
+	record.arguments.records = append(record.arguments.records, `\"text record payload\"`)
 	return record
 }
 
-func testPDNSRecordConfigALIAS() (*PowerDNSResourceArguments) {
+func testPDNSRecordConfigALIAS() (*PowerDNSRecordResource) {
 	record := NewPowerDNSRecordResource()
 	record.name                  = "test-alias"
 	record.arguments.name = "alias.sysa.xyz."
 	record.arguments.record_type = "ALIAS"
 	record.arguments.ttl = 3600
-	record.arguments.records = [ "www.some-alias.com." ]
+	record.arguments.records = append(record.arguments.records, "www.some-alias.com.")
 	return record
 }
 
-func testPDNSRecordConfigSOAS() (*PowerDNSResourceArguments) {
+func testPDNSRecordConfigSOA() (*PowerDNSRecordResource) {
 	record := NewPowerDNSRecordResource()
 	record.name                  = "test-soa"
 	record.arguments.zone = "test-soa-sysa.xyz."
 	record.arguments.name = "test-soa-sysa.xyz."
 	record.arguments.record_type = "SOA"
 	record.arguments.ttl = 3600
-	record.arguments.records = [ "something.something. hostmaster.sysa.xyz. 2019090301 10800 3600 604800 3600" ]
+	record.arguments.records = append(record.arguments.records, "something.something. hostmaster.sysa.xyz. 2019090301 10800 3600 604800 3600")
 	return record
 }
 
@@ -432,11 +439,11 @@ func testAccCheckPDNSRecordDestroy(s *terraform.State) error {
 	return nil
 }
 
-func testAccCheckPDNSRecordContents(recordConfig &PowerDNSRecordResource) resource.TestCheckFunc {
+func testAccCheckPDNSRecordContents(recordConfig *PowerDNSRecordResource) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[recordConfig.ResourceName()]
 		if !ok {
-			return fmt.Errorf("Not found: %s", n)
+			return fmt.Errorf("Not found: %s", recordConfig.ResourceName())
 		}
 
 		if rs.Primary.ID == "" {
@@ -453,24 +460,28 @@ func testAccCheckPDNSRecordContents(recordConfig &PowerDNSRecordResource) resour
 		}
 		for _, rec := range foundRecords {
 			if rec.ID() == rs.Primary.ID {
-				if rec.Name != recordConfig.name {
-					return fmt.Errorf("Record name field does not match: %#v : %#v", rec.Name, recordConfig.name)
+				if rec.Name != recordConfig.arguments.name {
+					return fmt.Errorf("Record name field does not match: %#v : %#v", rec.Name, recordConfig.arguments.name)
 				}
 
-				if rec.Type != recordConfig.record_type {
-					return fmt.Errorf("Record type field does not match: %#v : %#v", rec.Type, recordConfig.record_type)
+				if rec.Type != recordConfig.arguments.record_type {
+					return fmt.Errorf("Record type field does not match: %#v : %#v", rec.Type, recordConfig.arguments.record_type)
 				}
 
-				if rec.Content != recordConfig.records {
-					return fmt.Errorf("Record content field does not match: %#v : %#v", rec.Content, recordConfig.records)
+				// TODO: Need to determine content format (Raw JSON?)
+				fmt.Println(rec.Name + " [ " + rec.Content + " ] ")
+				/* invalid operation: rec.Content != recordConfig.arguments.records (mismatched types string and []string)
+				if rec.Content != recordConfig.arguments.records {
+					return fmt.Errorf("Record content field does not match: %#v : %#v", rec.Content, recordConfig.arguments.records)
+				}
+                                 */
+
+				if rec.TTL != recordConfig.arguments.ttl {
+					return fmt.Errorf("Record TTL field does not match: %#v : %#v", rec.TTL, recordConfig.arguments.ttl)
 				}
 
-				if rec.TTL != recordConfig.ttl {
-					return fmt.Errorf("Record TTL field does not match: %#v : %#v", rec.TTL, recordConfig.ttl)
-				}
-
-				if rec.SetPTR != recordConfig.set_ptr {
-					return fmt.Errorf("Record set ptr field does not match: %#v : %#v", rec.SetPtr, recordConfig.set_ptr)
+				if rec.SetPtr != recordConfig.arguments.set_ptr {
+					return fmt.Errorf("Record set ptr field does not match: %#v : %#v", rec.SetPtr, recordConfig.arguments.set_ptr)
 				}
 
 				return nil
